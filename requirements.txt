@@ -1,12 +1,12 @@
+# tokenizers: pick a version that typically has prebuilt wheels for Linux x86_64
+tokenizers==0.13.3
+
 # Core embeddings & HuggingFace stack
 sentence-transformers==2.2.2
 transformers==4.30.2
 huggingface-hub==0.14.1
 
-# Vector DB (on macOS/arm64 this works; use faiss-cpu on linux too)
-#faiss-cpu==1.7.4
-
-#for Linux
+# Vector DB (use a newer faiss that has Linux wheels)
 faiss-cpu==1.12.0
 
 # Numerical stack
