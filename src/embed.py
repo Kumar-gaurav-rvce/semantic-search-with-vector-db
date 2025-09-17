@@ -1,63 +1,92 @@
 # src/embed.py
 """
-Embedding utilities for semantic search.
+Embedding helper with dual-mode:
+ - Local mode: use SentenceTransformers (if installed)
+ - Cloud mode: fallback to OpenAI embeddings when OPENAI_API_KEY is configured
 
-This module wraps a SentenceTransformer model (MiniLM by default)
-and provides helper functions to embed text into normalized vectors
-that can be stored in FAISS for semantic search.
-
-Functions:
-    get_model: Lazy-load the SentenceTransformer model.
-    embed_texts: Convert a list of texts into normalized float32 embeddings.
+The function embed_texts(...) always returns float32 L2-normalized vectors
+compatible with FAISS inner-product index (cosine similarity).
 """
 
-from sentence_transformers import SentenceTransformer
+from __future__ import annotations
+import os
 import numpy as np
+from typing import List
 
-# Global cache for the embedding model
-_MODEL = None
+# Try to import sentence-transformers (may be absent on cloud)
+try:
+    from sentence_transformers import SentenceTransformer  # type: ignore
+    _HAVE_ST = True
+except Exception:
+    _HAVE_ST = False
 
+# Optional OpenAI fallback (lightweight, pure-Python)
+try:
+    import openai
+    _HAVE_OPENAI = True
+except Exception:
+    _HAVE_OPENAI = False
 
-def get_model(name: str = "sentence-transformers/all-MiniLM-L6-v2") -> SentenceTransformer:
+# Local cached model
+_ST_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+_ST_MODEL = None
+
+def _get_st_model(name: str = _ST_MODEL_NAME):
+    global _ST_MODEL
+    if _ST_MODEL is None:
+        _ST_MODEL = SentenceTransformer(name)
+    return _ST_MODEL
+
+def _openai_embed(texts: List[str], model: str = "text-embedding-3-small") -> np.ndarray:
     """
-    Lazy-load and return the SentenceTransformer model.
-
-    Args:
-        name (str, optional): Hugging Face model name. Defaults to
-            "sentence-transformers/all-MiniLM-L6-v2".
-
-    Returns:
-        SentenceTransformer: Loaded embedding model (cached globally).
+    Call OpenAI embeddings API. Returns numpy array shape (n, dim).
+    Requires OPENAI_API_KEY in env or Streamlit secrets.
+    Uses text-embedding-3-small (dimension 1536) by default — FAISS dimension must match.
     """
-    global _MODEL
-    if _MODEL is None:
-        # Load once and cache globally (saves time & memory)
-        _MODEL = SentenceTransformer(name)
-    return _MODEL
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not set for OpenAI embedding fallback.")
+    if not _HAVE_OPENAI:
+        raise RuntimeError("openai package not installed.")
+    openai.api_key = api_key
 
+    # call API in batches to avoid hitting length limits
+    embs = []
+    for i in range(0, len(texts), 16):
+        chunk = texts[i : i + 16]
+        resp = openai.Embedding.create(model=model, input=chunk)
+        for item in resp["data"]:
+            embs.append(item["embedding"])
+    return np.asarray(embs, dtype="float32")
 
-def embed_texts(texts: list[str]) -> np.ndarray:
+def embed_texts(texts: List[str]) -> np.ndarray:
     """
-    Embed a list of texts into normalized vectors.
+    Embed list of texts into float32 L2-normalized vectors.
 
-    Args:
-        texts (list[str]): List of input documents/queries to embed.
-
-    Returns:
-        np.ndarray: 2D array of shape (n_texts, dim), dtype float32.
-            Vectors are L2-normalized for cosine similarity search.
+    Priority:
+      1) SentenceTransformers (if installed) -> dims 384 (default model)
+      2) OpenAI embeddings if OPENAI_API_KEY is present -> dims depend on model (e.g. 1536)
     """
     if not texts:
-        return np.empty((0, get_model().get_sentence_embedding_dimension()), dtype="float32")
+        # return empty array with shape (0, dim) — caller should handle
+        return np.empty((0, 0), dtype="float32")
 
-    model = get_model()
+    # 1) Local ST model (preferred for dev)
+    if _HAVE_ST:
+        model = _get_st_model()
+        vecs = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)
+        return np.asarray(vecs, dtype="float32")
 
-    # Generate embeddings (normalized for cosine similarity)
-    vectors = model.encode(
-        texts,
-        show_progress_bar=False,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
+    # 2) OpenAI fallback when running in cloud (requires key)
+    if os.environ.get("OPENAI_API_KEY") and _HAVE_OPENAI:
+        vecs = _openai_embed(texts)
+        # normalize to unit length (L2) for cosine similarity with FAISS inner-product
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        vecs = vecs / norms
+        return np.asarray(vecs, dtype="float32")
+
+    # 3) No embedding backend available
+    raise RuntimeError(
+        "No embedding backend available. Install sentence-transformers locally or set OPENAI_API_KEY for cloud fallback."
     )
-
-    return np.asarray(vectors, dtype="float32")

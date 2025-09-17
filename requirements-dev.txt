@@ -1,4 +1,7 @@
-# Lightweight requirements for cloud deployment (OpenAI fallback)
+sentence-transformers==2.2.2
+transformers==4.30.2
+tokenizers==0.13.3
+huggingface-hub==0.14.1
 openai>=1.0
 faiss-cpu==1.12.0
 numpy<2
