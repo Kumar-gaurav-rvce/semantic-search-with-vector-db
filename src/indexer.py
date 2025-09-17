@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import numpy as np
 import faiss
+import os
+import requests
 
 # local utils: ensures sqlite table exists and returns DB connection
 from .utils import ensure_metadata_table, get_conn
@@ -50,6 +52,18 @@ def create_index(dim: int = DIM) -> faiss.Index:
     """
     return faiss.IndexFlatIP(dim)
 
+def _maybe_download(path: Path, url_env: str):
+    url = os.environ.get(url_env)
+    if url and not path.exists():
+        # stream download
+        resp = requests.get(url, stream=True)
+        resp.raise_for_status()
+        tmp = str(path) + ".part"
+        with open(tmp, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        Path(tmp).rename(path)
 
 def save_index(index: faiss.Index, path: Path = INDEX_PATH) -> None:
     """
@@ -73,6 +87,7 @@ def load_index(path: Path = INDEX_PATH, dim: int = DIM) -> faiss.Index:
     Returns:
         faiss.Index: loaded or newly created index.
     """
+    _maybe_download(path, "INDEX_URL")
     if not Path(path).exists():
         # Return a fresh index; caller should persist after adding vectors
         return create_index(dim)
@@ -103,11 +118,13 @@ def load_doc_ids(path: Path = DOC_IDS_PATH) -> List[str]:
     Returns:
         List[str]: doc ids in insertion order (matching FAISS idx positions).
     """
+    _maybe_download(path, "DOC_IDS_URL")   # ✅ use `path` not `doc_ids_path`
     if not Path(path).exists():
         return []
     loaded = np.load(str(path), allow_pickle=True)
     # ensure we return a native python list of strings
     return list(loaded.tolist())
+
 
 
 # ------------------------
