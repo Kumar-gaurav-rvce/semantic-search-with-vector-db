@@ -37,6 +37,122 @@ st.title("Vector DB Demo — Advanced Features")
 # Ensure the SQLite metadata table exists (id, title, text, etc.)
 ensure_metadata_table()
 
+
+# TEMPORARY DEBUG — paste into app/streamlit_app.py (sidebar)
+import streamlit as _st
+if _st.sidebar.button("DEBUG: inspect search internals"):
+    from src.embed import embed_texts
+    from src.indexer import get_index_and_doc_ids
+    from src.utils import get_conn
+    from src.rerank import rerank_with_cross_encoder
+    import numpy as _np
+    _query = _st.text_input("DEBUG query", "airport")
+    if not _query:
+        _st.sidebar.warning("Enter a debug query above")
+    else:
+        _st.sidebar.write("Running debug for query:", _query)
+        # 1) embed
+        try:
+            qvec = embed_texts([_query])
+            _st.sidebar.write("query embed shape:", qvec.shape, "dtype:", qvec.dtype)
+        except Exception as e:
+            _st.sidebar.error("embed_texts error: " + str(e))
+            qvec = None
+
+        # 2) load index
+        idx, doc_ids = get_index_and_doc_ids()
+        _st.sidebar.write("index.ntotal:", getattr(idx, "ntotal", None))
+        _st.sidebar.write("num doc_ids:", len(doc_ids))
+        try:
+            idx_dim = getattr(idx, "d", None) or getattr(idx, "dim", None)
+            _st.sidebar.write("index dim:", idx_dim)
+        except Exception:
+            pass
+
+        if qvec is not None and getattr(idx, "ntotal", 0) > 0:
+            # 3) run FAISS search (raw)
+            try:
+                D, I = idx.search(qvec, 20)
+                _st.sidebar.write("Raw FAISS D (scores):", D.tolist() if hasattr(D, "tolist") else D)
+                _st.sidebar.write("Raw FAISS I (indices):", I.tolist() if hasattr(I, "tolist") else I)
+            except Exception as e:
+                _st.sidebar.error("FAISS search error: " + str(e))
+                D, I = None, None
+
+            # 4) map to doc_ids and metadata
+            if I is not None:
+                raw_idxs = I[0].tolist()
+                raw_scores = (D[0].tolist() if D is not None else [])
+                cand_ids = []
+                cand_scores = []
+                for idx_pos, sc in zip(raw_idxs, raw_scores):
+                    if idx_pos == -1:
+                        continue
+                    try:
+                        did = doc_ids[idx_pos]
+                        cand_ids.append(did)
+                        cand_scores.append(float(sc))
+                    except Exception as e:
+                        _st.sidebar.write(f"index->doc_id mapping error for idx {idx_pos}: {e}")
+
+                _st.sidebar.write("Mapped candidate doc_ids:", cand_ids)
+                _st.sidebar.write("Mapped candidate raw scores:", cand_scores)
+
+                # 5) metadata lookup
+                if cand_ids:
+                    conn = get_conn()
+                    cur = conn.cursor()
+                    qmarks = ",".join(["?"] * len(cand_ids))
+                    cur.execute(f"SELECT id, title, text FROM docs WHERE id IN ({qmarks})", tuple(cand_ids))
+                    rows = cur.fetchall()
+                    conn.close()
+                    _st.sidebar.write("Metadata rows fetched (count):", len(rows))
+                    _st.sidebar.write(rows[:10])
+
+                # 6) fuzzy scores
+                try:
+                    from rapidfuzz import fuzz
+                    fuzzy_scores = []
+                    texts_for_fuzzy = []
+                    for did in cand_ids:
+                        # fetch text quickly
+                        conn = get_conn(); cur = conn.cursor()
+                        cur.execute("SELECT title, text FROM docs WHERE id = ?", (did,))
+                        r = cur.fetchone(); conn.close()
+                        txt = ((r["title"] or "") + " " + (r["text"] or "")).strip() if r else ""
+                        texts_for_fuzzy.append(txt)
+                        s = max(fuzz.token_sort_ratio(_query, txt), fuzz.partial_ratio(_query, txt))
+                        fuzzy_scores.append(float(s) / 100.0)
+                    _st.sidebar.write("Fuzzy scores:", fuzzy_scores)
+                except Exception as e:
+                    _st.sidebar.write("Fuzzy scoring error: " + str(e))
+
+                # 7) rerank (if available)
+                try:
+                    # Build candidates in the same shape as reranker expects
+                    simple_candidates = []
+                    conn = get_conn(); cur = conn.cursor()
+                    for did in cand_ids:
+                        cur.execute("SELECT title, text FROM docs WHERE id = ?", (did,))
+                        r = cur.fetchone()
+                        simple_candidates.append({"id": did, "title": r["title"] or "", "text": r["text"] or "", "score": 0.0})
+                    conn.close()
+                    reranked = rerank_with_cross_encoder(_query, simple_candidates, top_k=10)
+                    _st.sidebar.write("Top reranked ids + rerank_score:", [(c["id"], c.get("rerank_score")) for c in reranked][:10])
+                except Exception as e:
+                    _st.sidebar.write("Rerank error (or not available): " + str(e))
+
+                # 8) show final filter example (min_score=0)
+                try:
+                    final = [ (did, sc) for did, sc in zip(cand_ids, cand_scores) if sc >= 0 ]
+                    _st.sidebar.write("Final candidates after naive filter (min_score=0):", final)
+                except Exception as e:
+                    _st.sidebar.write("Final filter error: " + str(e))
+        else:
+            _st.sidebar.warning("No query vector or empty index")
+
+
+
 # ---------------------------------------------------------------------------
 # Sidebar controls
 # ---------------------------------------------------------------------------
