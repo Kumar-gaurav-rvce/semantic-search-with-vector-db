@@ -1,13 +1,11 @@
-# tokenizers: pick a version that typically has prebuilt wheels for Linux x86_64
+# binary-friendly pins for hosted build
 tokenizers==0.13.3
+faiss-cpu==1.12.0
 
 # Core embeddings & HuggingFace stack
 sentence-transformers==2.2.2
 transformers==4.30.2
 huggingface-hub==0.14.1
-
-# Vector DB (use a newer faiss that has Linux wheels)
-faiss-cpu==1.12.0
 
 # Numerical stack
 numpy<2
