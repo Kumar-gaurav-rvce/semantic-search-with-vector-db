@@ -168,13 +168,7 @@ with col_side:
 
     st.markdown("---")
 
-    st.subheader("Tools")
-    if st.button("Reload modules"):
-        # Streamlit-specific: reruns the script (helpful after fixing env vars)
-        st.experimental_rerun()
-
-    st.caption("Use 'Reload modules' after updating code or fixing env vars. See README for troubleshooting.")
-
+   
 # ---------------------------------------------------------------------------
 # Main panel
 # ---------------------------------------------------------------------------
