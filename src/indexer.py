@@ -154,24 +154,43 @@ def add_vectors(
         ValueError: if vector dtype/dimension mismatch.
     """
     # Basic validation
+
     assert len(ids) == vectors.shape[0] == len(metas), "ids, vectors, metas length mismatch"
 
-    # Ensure numpy dtype and dimensionality
+    # Ensure numpy dtype and two-dimensionality
     if vectors.dtype != np.float32:
         vectors = vectors.astype("float32")
 
-    if vectors.ndim != 2 or vectors.shape[1] != DIM:
-        raise ValueError(f"Expected vectors shape (N, {DIM}); got {vectors.shape}")
+    if vectors.ndim != 2:
+        raise ValueError(f"Expected 2D vectors array, got shape {vectors.shape}")
 
-    # Sanity check: if using IP index, vectors should be normalized for cosine similarity
-    # We don't force-normalize here to avoid modifying caller's arrays, but we check and warn.
+    # Inferred incoming vector dimensionality
+    incoming_dim = vectors.shape[1]
+
+    # If index has a declared dimension, ensure it matches the incoming vectors.
+    # For FAISS IndexFlatIP, the attribute is accessible via index.d
+    try:
+        index_dim = int(getattr(index, "d", getattr(index, "dim", None)))
+    except Exception:
+        index_dim = None
+
+    if index_dim is not None:
+        if index_dim != incoming_dim:
+            raise ValueError(f"FAISS index expects vectors of dim {index_dim}, but got vectors with dim {incoming_dim}")
+    else:
+        # If index has no declared dim (unlikely), we proceed but warn
+        # (no-op here; FAISS indices typically have attribute d)
+        pass
+
+    # Sanity check: if using IP index, vectors should be normalized for cosine similarity.
     norms = np.linalg.norm(vectors, axis=1)
     if not np.allclose(norms, 1.0, atol=1e-3):
-        # Normalize in-place for safety (prevents incorrect similarity results)
+        # Normalize for safety (prevents incorrect similarity results)
         vectors = vectors / norms[:, None]
 
-    # Add vectors to the index
+    # Now append vectors to the index (FAISS requires matching dimensionality)
     index.add(vectors)
+
 
     # Persist/append doc ids to disk, keeping insertion order aligned with FAISS positions
     existing_ids = load_doc_ids(doc_ids_path)
