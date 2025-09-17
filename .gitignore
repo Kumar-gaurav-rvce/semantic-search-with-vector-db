@@ -1,0 +1,7 @@
+__pycache__/
+.venv/
+faiss_index.bin
+vector_index.db
+*.npy
+lambda_package.zip
+.DS_Store

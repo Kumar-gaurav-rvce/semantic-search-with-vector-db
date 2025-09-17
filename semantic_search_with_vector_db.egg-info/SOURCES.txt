@@ -1,0 +1,12 @@
+README.md
+setup.py
+semantic_search_with_vector_db.egg-info/PKG-INFO
+semantic_search_with_vector_db.egg-info/SOURCES.txt
+semantic_search_with_vector_db.egg-info/dependency_links.txt
+semantic_search_with_vector_db.egg-info/top_level.txt
+src/__init__.py
+src/embed.py
+src/indexer.py
+src/query.py
+src/utils.py
+tests/test_index_query.py
